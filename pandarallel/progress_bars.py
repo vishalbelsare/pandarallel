@@ -5,11 +5,12 @@ import sys
 from abc import ABC, abstractmethod
 from enum import Enum
 from itertools import count
-from time import time
+from time import time_ns
 from typing import Callable, List, Union
 
 from .utils import WorkerStatus
 
+INTERVAL_NS = 250_000_000  # 0.25 sec
 MINIMUM_TERMINAL_WIDTH = 72
 
 
@@ -37,7 +38,7 @@ class ProgressState:
     def __init__(self, chunk_size: int) -> None:
         self.last_put_iteration = 0
         self.next_put_iteration = max(chunk_size // 100, 1)
-        self.last_put_time = time()
+        self.last_put_time = time_ns()
 
 
 def is_notebook_lab() -> bool:
@@ -89,7 +90,10 @@ class ProgressBarsConsole(ProgressBars):
         self.__lines = []
 
     def __update_line(self, done: int, total: int) -> str:
-        percent = done / total
+        if total == 0:
+            percent = 0
+        else:
+            percent = done / total
         bar = (":" * int(percent * 40)).ljust(40, " ")
         percent = round(percent * 100, 2)
         format = " {percent:6.2f}% {bar:s} | {done:8d} / {total:8d} |"
@@ -154,13 +158,15 @@ class ProgressBarsNotebookLab(ProgressBars):
         for index, value in enumerate(values):
             bar, label = self.__bars[index].children
 
+            label.value = "{} / {}".format(value, bar.max)
+            
             bar.value = value
-            bar.description = "{:.2f}%".format(value / bar.max * 100)
 
             if value >= bar.max:
                 bar.bar_style = "success"
 
-            label.value = "{} / {}".format(value, bar.max)
+            if bar.max != 0:
+                bar.description = "{:.2f}%".format(bar.value / bar.max * 100)
 
     def set_error(self, index: int) -> None:
         """Set a bar on error"""
@@ -197,13 +203,16 @@ def progress_wrapper(
         iteration = next(counter)
 
         if iteration == state.next_put_iteration:
-            time_now = time()
+            time_now = time_ns()
             master_workers_queue.put_nowait((index, WorkerStatus.Running, iteration))
 
             delta_t = time_now - state.last_put_time
             delta_i = iteration - state.last_put_iteration
 
-            state.next_put_iteration += max(int((delta_i / delta_t) * 0.25), 1)
+            state.next_put_iteration += (
+                max(int((delta_i / delta_t) * INTERVAL_NS), 1) if delta_t != 0 else 1
+            )
+
             state.last_put_iteration = iteration
             state.last_put_time = time_now
 

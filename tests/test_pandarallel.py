@@ -1,3 +1,4 @@
+import importlib
 import math
 
 import numpy as np
@@ -18,6 +19,11 @@ def progress_bar(request):
 
 @pytest.fixture(params=(None, False))
 def use_memory_fs(request):
+    return request.param
+
+
+@pytest.fixture(params=(RuntimeError, AttributeError, ZeroDivisionError))
+def exception(request):
     return request.param
 
 
@@ -158,6 +164,16 @@ def pandarallel_init(progress_bar, use_memory_fs):
     )
 
 
+def test_dataframe_apply_invalid_function(pandarallel_init, exception):
+    def f(_):
+        raise exception
+
+    df = pd.DataFrame(dict(a=[1, 2, 3, 4]))
+
+    with pytest.raises(exception):
+        df.parallel_apply(f)
+
+
 def test_dataframe_apply_axis_0(pandarallel_init, func_dataframe_apply_axis_0, df_size):
     df = pd.DataFrame(
         dict(
@@ -194,6 +210,20 @@ def test_dataframe_apply_invalid_axis(pandarallel_init):
 
     with pytest.raises(ValueError):
         df.parallel_apply(lambda x: x, axis="invalid")
+    
+def test_empty_dataframe_apply_axis_0(pandarallel_init, func_dataframe_apply_axis_0):
+    df = pd.DataFrame()
+
+    res = df.apply(func_dataframe_apply_axis_0)
+    res_parallel = df.parallel_apply(func_dataframe_apply_axis_0)
+    assert res.equals(res_parallel)
+
+def test_empty_dataframe_apply_axis_1(pandarallel_init, func_dataframe_apply_axis_1):
+    df = pd.DataFrame()
+
+    res = df.apply(func_dataframe_apply_axis_1)
+    res_parallel = df.parallel_apply(func_dataframe_apply_axis_1)
+    assert res.equals(res_parallel)
 
 
 def test_dataframe_applymap(pandarallel_init, func_dataframe_applymap, df_size):
@@ -217,6 +247,13 @@ def test_series_map(pandarallel_init, func_series_map, df_size):
 
 def test_series_apply(pandarallel_init, func_series_apply, df_size):
     df = pd.DataFrame(dict(a=np.random.rand(df_size) + 1))
+
+    res = df.a.apply(func_series_apply, args=(2,), bias=3)
+    res_parallel = df.a.parallel_apply(func_series_apply, args=(2,), bias=3)
+    assert res.equals(res_parallel)
+
+def test_empty_series_apply(pandarallel_init, func_series_apply):
+    df = pd.DataFrame(dict(a=[]))
 
     res = df.a.apply(func_series_apply, args=(2,), bias=3)
     res_parallel = df.a.parallel_apply(func_series_apply, args=(2,), bias=3)
@@ -341,3 +378,10 @@ def test_dataframe_axis_1_no_reduction(
     res_parallel = df.parallel_apply(func_dataframe_apply_axis_1_no_reduce, axis=1)
 
     assert res.equals(res_parallel)
+
+def test_memory_fs_root_environment_variable(monkeypatch):
+    monkeypatch.setenv("MEMORY_FS_ROOT", "/test")
+    from pandarallel import core
+    importlib.reload(core)
+
+    assert core.MEMORY_FS_ROOT == "/test"
